@@ -123,17 +123,11 @@ async def download_redgifs_video(url: str) -> str | None:
             # Скачиваем через Playwright download API
             logger.info("Скачиваем видео через браузер...")
 
-            # Создаём новую страницу для скачивания
-            download_page = await pw_context.new_page()
-
-            # Начинаем ожидание скачивания и переходим по ссылке
-            async with asyncio.timeout(60):  # 60 секунд таймаут
-                download_task = asyncio.create_task(download_page.wait_for_download())
-                await download_page.goto(video_url, wait_until="domcontentloaded")
-                download = await download_task
-                await download.save_as(video_path)
-
-            await download_page.close()
+            # Используем expect_download контекстный менеджер
+            async with pw_context.expect_download() as download_info:
+                await page.goto(video_url, wait_until="domcontentloaded")
+            download = download_info.value
+            await download.save_as(video_path)
 
             await pw_context.close()
             await browser.close()
