@@ -86,10 +86,7 @@ async def download_redgifs_video(url: str) -> str | None:
         async with async_playwright() as p:
             logger.info(f"Открываем страницу: {url}")
             browser = await p.chromium.launch(headless=True)
-            pw_context = await browser.new_context(
-                accept_downloads=True,
-            )
-            page = await pw_context.new_page()
+            page = await browser.new_page()
 
             # Переходим на страницу
             await page.goto(url, wait_until="networkidle")
@@ -102,7 +99,6 @@ async def download_redgifs_video(url: str) -> str | None:
 
             if not video_url_match:
                 logger.error("Ссылка на видео не найдена в HTML")
-                await pw_context.close()
                 await browser.close()
                 return None
 
@@ -120,37 +116,45 @@ async def download_redgifs_video(url: str) -> str | None:
             video_path = os.path.join(TEMP_DIR, f"{video_title}.mp4")
             logger.info(f"Скачиваем видео в: {video_path}")
 
-            # Скачиваем через Playwright - используем route interception
+            # Скачиваем через Playwright - используем событие download
             logger.info("Скачиваем видео через браузер...")
 
-            video_data = None
+            # Создаём контекст с путём для скачиваний
+            download_dir = TEMP_DIR
+            context = await browser.new_context(
+                accept_downloads=True,
+                downloads_path=download_dir,
+            )
+            download_page = await context.new_page()
 
-            # Перехватываем запрос к видео
-            async def handle_route(route, request):
-                nonlocal video_data
-                response = await route.fetch()
-                video_data = await response.body()
-                await route.continue_()
+            # Подписываемся на событие download
+            download_task = None
 
-            await page.route("**/*.mp4", handle_route)
+            def on_download(download):
+                nonlocal download_task
+                download_task = download
 
-            # Переходим по ссылке на видео
-            await page.goto(video_url, wait_until="domcontentloaded")
+            download_page.on("download", on_download)
 
-            # Ждём завершения загрузки
-            await page.wait_for_load_state("networkidle")
-            await asyncio.sleep(2)
+            # Переходим на страницу с видео
+            await download_page.goto(video_url, wait_until="domcontentloaded")
 
-            if video_data:
-                with open(video_path, "wb") as f:
-                    f.write(video_data)
+            # Ждём, пока начнётся скачивание (до 30 секунд)
+            for _ in range(30):
+                if download_task:
+                    break
+                await asyncio.sleep(1)
+
+            if download_task:
+                await download_task.save_as(video_path)
+                logger.info(f"Видео скачано: {video_path}")
             else:
-                logger.error("Видео данные не получены")
-                await pw_context.close()
+                logger.error("Скачивание не началось")
+                await context.close()
                 await browser.close()
                 return None
 
-            await pw_context.close()
+            await context.close()
             await browser.close()
 
             if os.path.exists(video_path):
