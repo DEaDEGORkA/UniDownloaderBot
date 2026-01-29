@@ -12,8 +12,11 @@ services:
       - TEMP_DIR=/tmp/video_downloads
       # Время хранения файлов в днях
       - FILE_RETENTION_DAYS=2
+      # Путь к файлу cookies (опционально)
+      - COOKIES_FILE=/app/cookies.txt
     volumes:
       - ./downloads:/tmp/video_downloads
+      - ./cookies.txt:/app/cookies.txt:ro
     # Ограничение ресурсов (работает в docker-compose standalone и swarm)
     mem_limit: 512m
     cpus: 1.0
