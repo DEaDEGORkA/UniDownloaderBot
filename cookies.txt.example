@@ -1,0 +1,13 @@
+# Netscape HTTP Cookie File
+# Этот файл необходим для скачивания видео с сайтов, защищённых Cloudflare (RedGifs и др.)
+# Скопируйте этот файл в cookies.txt и заполните реальными cookies из браузера
+
+# Как получить cookies:
+# 1. Установите расширение "Get cookies.txt" для Chrome/Firefox
+# 2. Зайдите на https://www.redgifs.com
+# 3. Нажмите на расширение и экспортируйте cookies
+# 4. Замените содержимое этого файла на экспортированные cookies
+
+# Пример формата:
+# .redgifs.com	TRUE	/	FALSE	0	auth_token	ваш_токен
+# .redgifs.com	TRUE	/	FALSE	0	session	ваша_сессия

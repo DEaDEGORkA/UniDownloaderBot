@@ -1,13 +1,13 @@
 """Telegram-бот для скачивания видео с помощью yt-dlp"""
 import os
 import logging
-import tempfile
 from pathlib import Path
+from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 import yt_dlp
 
-from config import TELEGRAM_TOKEN
+from config import TELEGRAM_TOKEN, TEMP_DIR, FILE_RETENTION_DAYS
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -31,18 +31,48 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def cleanup_old_files():
+    """Удаляет файлы старше FILE_RETENTION_DAYS дней"""
+    temp_path = Path(TEMP_DIR)
+    if not temp_path.exists():
+        return
+
+    cutoff_date = datetime.now() - timedelta(days=FILE_RETENTION_DAYS)
+    deleted_count = 0
+    freed_space = 0
+
+    for file_path in temp_path.glob("**/*"):
+        if file_path.is_file():
+            try:
+                file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                if file_mtime < cutoff_date:
+                    file_size = file_path.stat().st_size
+                    file_path.unlink()
+                    deleted_count += 1
+                    freed_space += file_size
+                    logger.info(f"Удалён старый файл: {file_path}")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении файла {file_path}: {e}")
+
+    if deleted_count > 0:
+        logger.info(
+            f"Очистка завершена: удалено {deleted_count} файлов, "
+            f"освобождено {freed_space / (1024*1024):.2f} МБ"
+        )
+
+
 def download_video(url: str) -> str | None:
     """
     Скачивает видео по URL и возвращает путь к файлу.
     Возвращает None в случае ошибки.
     """
-    # Создаём временную директорию для скачивания
-    temp_dir = tempfile.mkdtemp()
-    
+    # Создаём директорию для скачивания, если не существует
+    Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
+
     # Настройки yt-dlp
     ydl_opts = {
         "format": "best",  # Лучшее качество
-        "outtmpl": os.path.join(temp_dir, "%(title)s.%(ext)s"),
+        "outtmpl": os.path.join(TEMP_DIR, "%(title)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
     }
@@ -51,12 +81,14 @@ def download_video(url: str) -> str | None:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # Получаем информацию о видео
             info = ydl.extract_info(url, download=True)
-            video_title = info.get("title", "video")
             video_ext = info.get("ext", "mp4")
             
             # Ищем скачанный файл
-            video_path = Path(temp_dir).glob(f"*.{video_ext}").__next__()
-            return str(video_path)
+            files = list(Path(TEMP_DIR).glob(f"*.{video_ext}"))
+            if files:
+                video_path = files[0]
+                return str(video_path)
+            return None
     except Exception as e:
         logger.error(f"Ошибка при скачивании видео: {e}")
         return None
@@ -100,18 +132,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Ошибка при отправке видео: {e}")
             await processing_message.edit_text("Ошибка при отправке видео. Попробуйте позже.")
-        finally:
-            # Удаляем временный файл
-            if os.path.exists(video_path):
-                os.remove(video_path)
     else:
         await processing_message.edit_text(
             "❌ Не удалось скачать видео. Проверьте ссылку и попробуйте снова."
         )
 
 
+async def scheduled_cleanup(context: ContextTypes.DEFAULT_TYPE):
+    """Периодическая очистка старых файлов"""
+    logger.info("Запуск плановой очистки файлов...")
+    cleanup_old_files()
+
+
 def main():
     """Запуск бота"""
+    if not TELEGRAM_TOKEN:
+        logger.error("Не указан TELEGRAM_TOKEN. Установите переменную окружения.")
+        return
+
     application = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
@@ -125,6 +163,16 @@ def main():
     application.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     )
+
+    # Добавляем периодическую очистку файлов (каждые 6 часов)
+    application.job_queue.run_repeating(
+        scheduled_cleanup,
+        interval=6 * 60 * 60,  # 6 часов в секундах
+        first=10  # Первый запуск через 10 секунд после старта
+    )
+
+    # Первичная очистка при старте
+    cleanup_old_files()
 
     logger.info("Запуск бота...")
     application.run_polling()

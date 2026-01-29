@@ -14,11 +14,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем код приложения
 COPY . .
 
-# Создаём директорию для временных файлов
-RUN mkdir -p /tmp/video_downloads
-
 # Переменные окружения
 ENV PYTHONUNBUFFERED=1
+ENV TEMP_DIR=/tmp/video_downloads
+ENV FILE_RETENTION_DAYS=2
+
+# Создаём директорию для скачанных файлов
+RUN mkdir -p /tmp/video_downloads
 
 # Запуск бота
 CMD ["python", "main.py"]
