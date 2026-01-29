@@ -69,28 +69,49 @@ def download_video(url: str) -> str | None:
     # Создаём директорию для скачивания, если не существует
     Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
 
-    # Настройки yt-dlp
+    # Путь к файлу cookies
+    cookies_path = os.environ.get("COOKIES_FILE", "/app/cookies.txt")
+
+    # Настройки yt-dlp с поддержкой проблемных сайтов (RedGifs, Cloudflare и т.д.)
     ydl_opts = {
-        "format": "best",  # Лучшее качество
+        "format": "best",
         "outtmpl": os.path.join(TEMP_DIR, "%(title)s.%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
+        "quiet": False,  # Включаем логирование для отладки
+        "no_warnings": False,
+        # Настройки для Cloudflare и проблемных сайтов
+        "extractor_retries": 3,
+        "fragment_retries": 3,
+        "skip_unavailable_fragments": False,
+        "http_chunk_size": 10485760,  # 10 MB chunks
     }
+
+    # Если есть файл cookies, используем его
+    if os.path.exists(cookies_path):
+        ydl_opts["cookies"] = cookies_path
+        logger.info(f"Используем cookies из {cookies_path}")
+    else:
+        logger.info("Файл cookies не найден, используем настройки по умолчанию")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # Получаем информацию о видео
             info = ydl.extract_info(url, download=True)
             video_ext = info.get("ext", "mp4")
-            
+            video_title = info.get("title", "video")
+
             # Ищем скачанный файл
             files = list(Path(TEMP_DIR).glob(f"*.{video_ext}"))
             if files:
                 video_path = files[0]
+                logger.info(f"Видео '{video_title}' скачано: {video_path}")
                 return str(video_path)
+            logger.warning(f"Файл видео не найден для '{video_title}'")
             return None
+    except yt_dlp.utils.DownloadError as e:
+        logger.error(f"Ошибка загрузки: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Ошибка при скачивании видео: {e}")
+        logger.error(f"Неожиданная ошибка: {e}")
         return None
 
 
