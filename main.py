@@ -1,6 +1,8 @@
 """Telegram-бот для скачивания видео с помощью yt-dlp"""
 import os
 import logging
+import threading
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from telegram import Update
@@ -165,11 +167,26 @@ async def scheduled_cleanup(context: ContextTypes.DEFAULT_TYPE):
     cleanup_old_files()
 
 
+def cleanup_worker():
+    """Фоновый поток для периодической очистки файлов"""
+    logger.info("Воркер очистки запущен")
+    while True:
+        time.sleep(6 * 60 * 60)  # Спим 6 часов
+        cleanup_old_files()
+
+
 def main():
     """Запуск бота"""
     if not TELEGRAM_TOKEN:
         logger.error("Не указан TELEGRAM_TOKEN. Установите переменную окружения.")
         return
+
+    # Запускаем фоновый поток для очистки файлов
+    cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
+    cleanup_thread.start()
+
+    # Первичная очистка при старте
+    cleanup_old_files()
 
     application = (
         ApplicationBuilder()
@@ -184,16 +201,6 @@ def main():
     application.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     )
-
-    # Добавляем периодическую очистку файлов (каждые 6 часов)
-    application.job_queue.run_repeating(
-        scheduled_cleanup,
-        interval=6 * 60 * 60,  # 6 часов в секундах
-        first=10  # Первый запуск через 10 секунд после старта
-    )
-
-    # Первичная очистка при старте
-    cleanup_old_files()
 
     logger.info("Запуск бота...")
     application.run_polling()
