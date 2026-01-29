@@ -11,7 +11,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 import yt_dlp
 
 try:
-    from playwright.sync_api import sync_playwright
+    from playwright.async_api import async_playwright
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -70,7 +70,7 @@ def cleanup_old_files():
         )
 
 
-def download_redgifs_video(url: str) -> str | None:
+async def download_redgifs_video(url: str) -> str | None:
     """
     Скачивает видео с RedGifs через Playwright (обход Cloudflare).
     """
@@ -82,23 +82,23 @@ def download_redgifs_video(url: str) -> str | None:
     Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
 
     try:
-        with sync_playwright() as p:
+        async with async_playwright() as p:
             logger.info(f"Открываем страницу: {url}")
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
 
             # Переходим на страницу
-            page.goto(url, wait_until="networkidle")
+            await page.goto(url, wait_until="networkidle")
 
             # Получаем HTML страницы
-            html = page.content()
+            html = await page.content()
 
             # Ищем ссылку на видео в HTML
             video_url_match = re.search(r'"contentUrl":"([^"]+\.mp4)"', html)
 
             if not video_url_match:
                 logger.error("Ссылка на видео не найдена в HTML")
-                browser.close()
+                await browser.close()
                 return None
 
             video_url = video_url_match.group(1)
@@ -115,14 +115,19 @@ def download_redgifs_video(url: str) -> str | None:
             video_path = os.path.join(TEMP_DIR, f"{video_title}.mp4")
             logger.info(f"Скачиваем видео в: {video_path}")
 
-            # Скачиваем с правильными заголовками браузера
-            page.goto(video_url, wait_until="domcontentloaded")
-            video_response = page.request.get(video_url)
+            # Скачиваем видео через requests с заголовками браузера
+            import httpx
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.5",
+            }
+            async with httpx.AsyncClient() as client:
+                response = await client.get(video_url, headers=headers, follow_redirects=True)
+                with open(video_path, "wb") as f:
+                    f.write(response.content)
 
-            with open(video_path, "wb") as f:
-                f.write(video_response.body())
-
-            browser.close()
+            await browser.close()
 
             if os.path.exists(video_path):
                 logger.info(f"Видео скачано: {video_path}")
@@ -134,18 +139,20 @@ def download_redgifs_video(url: str) -> str | None:
     return None
 
 
-def download_video(url: str) -> str | None:
+async def download_video(url: str) -> str | None:
     """
     Скачивает видео по URL и возвращает путь к файлу.
     Возвращает None в случае ошибки.
     """
+    import asyncio
+
     # Создаём директорию для скачивания, если не существует
     Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
 
     # Проверяем, если это RedGifs - используем Playwright
     if "redgifs.com" in url.lower() and PLAYWRIGHT_AVAILABLE:
         logger.info("Используем Playwright для RedGifs")
-        return download_redgifs_video(url)
+        return await download_redgifs_video(url)
 
     # Путь к файлу cookies
     cookies_path = os.environ.get("COOKIES_FILE", "/app/cookies.txt")
@@ -223,8 +230,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     processing_message = await update.message.reply_text("⏳ Скачиваю видео... Это может занять некоторое время.")
     
     # Скачиваем видео
-    video_path = download_video(url)
-    
+    video_path = await download_video(url)
+
     if video_path and os.path.exists(video_path):
         file_size = os.path.getsize(video_path)
         
