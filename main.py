@@ -1,4 +1,5 @@
 """Telegram-бот для скачивания видео с помощью yt-dlp"""
+import asyncio
 import os
 import logging
 import threading
@@ -85,7 +86,10 @@ async def download_redgifs_video(url: str) -> str | None:
         async with async_playwright() as p:
             logger.info(f"Открываем страницу: {url}")
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
+            pw_context = await browser.new_context(
+                accept_downloads=True,
+            )
+            page = await pw_context.new_page()
 
             # Переходим на страницу
             await page.goto(url, wait_until="networkidle")
@@ -98,6 +102,7 @@ async def download_redgifs_video(url: str) -> str | None:
 
             if not video_url_match:
                 logger.error("Ссылка на видео не найдена в HTML")
+                await pw_context.close()
                 await browser.close()
                 return None
 
@@ -115,21 +120,22 @@ async def download_redgifs_video(url: str) -> str | None:
             video_path = os.path.join(TEMP_DIR, f"{video_title}.mp4")
             logger.info(f"Скачиваем видео в: {video_path}")
 
-            # Скачиваем видео через Playwright
-            logger.info(f"Скачиваем видео через браузер...")
+            # Скачиваем через Playwright download API
+            logger.info("Скачиваем видео через браузер...")
 
-            # Используем download API
-            async with context.new_page() as page2:
-                # Начинаем скачивание
-                download_task = page2.wait_for_download("start")
-                await page2.goto(video_url, wait_until="domcontentloaded")
+            # Создаём новую страницу для скачивания
+            download_page = await pw_context.new_page()
+
+            # Начинаем ожидание скачивания и переходим по ссылке
+            async with asyncio.timeout(60):  # 60 секунд таймаут
+                download_task = asyncio.create_task(download_page.wait_for_download())
+                await download_page.goto(video_url, wait_until="domcontentloaded")
                 download = await download_task
-
-                # Сохраняем
                 await download.save_as(video_path)
 
-            logger.info(f"Видео скачано: {video_path}")
+            await download_page.close()
 
+            await pw_context.close()
             await browser.close()
 
             if os.path.exists(video_path):
@@ -147,8 +153,6 @@ async def download_video(url: str) -> str | None:
     Скачивает видео по URL и возвращает путь к файлу.
     Возвращает None в случае ошибки.
     """
-    import asyncio
-
     # Создаём директорию для скачивания, если не существует
     Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
 
