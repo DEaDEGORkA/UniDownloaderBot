@@ -120,37 +120,35 @@ async def download_redgifs_video(url: str) -> str | None:
             video_path = os.path.join(TEMP_DIR, f"{video_title}.mp4")
             logger.info(f"Скачиваем видео в: {video_path}")
 
-            # Скачиваем через Playwright - получаем видео через fetch в браузере
+            # Скачиваем через Playwright - используем route interception
             logger.info("Скачиваем видео через браузер...")
 
-            # Получаем видео через JavaScript fetch
-            video_data = await page.evaluate("""async (url) => {
-                try {
-                    const response = await fetch(url);
-                    const arrayBuffer = await response.arrayBuffer();
-                    // Конвертируем в base64 для передачи
-                    const base64 = Buffer.from(arrayBuffer).toString('base64');
-                    return {
-                        success: true,
-                        data: base64,
-                        contentType: response.headers.get('content-type') || 'video/mp4'
-                    };
-                } catch (e) {
-                    return { success: false, error: e.message };
-                }
-            }""", video_url)
+            video_data = None
 
-            if not video_data.get("success"):
-                logger.error(f"Ошибка при скачивании видео: {video_data.get('error')}")
+            # Перехватываем запрос к видео
+            async def handle_route(route, request):
+                nonlocal video_data
+                response = await route.fetch()
+                video_data = await response.body()
+                await route.continue_()
+
+            await page.route("**/*.mp4", handle_route)
+
+            # Переходим по ссылке на видео
+            await page.goto(video_url, wait_until="domcontentloaded")
+
+            # Ждём завершения загрузки
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(2)
+
+            if video_data:
+                with open(video_path, "wb") as f:
+                    f.write(video_data)
+            else:
+                logger.error("Видео данные не получены")
                 await pw_context.close()
                 await browser.close()
                 return None
-
-            # Сохраняем видео из base64
-            import base64
-            video_content = base64.b64decode(video_data["data"])
-            with open(video_path, "wb") as f:
-                f.write(video_content)
 
             await pw_context.close()
             await browser.close()
