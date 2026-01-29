@@ -3,11 +3,18 @@ import os
 import logging
 import threading
 import time
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 import yt_dlp
+
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 from config import TELEGRAM_TOKEN, TEMP_DIR, FILE_RETENTION_DAYS
 
@@ -63,6 +70,70 @@ def cleanup_old_files():
         )
 
 
+def download_redgifs_video(url: str) -> str | None:
+    """
+    Скачивает видео с RedGifs через Playwright (обход Cloudflare).
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        logger.error("Playwright не установлен. Установите: pip install playwright")
+        return None
+
+    # Создаём директорию для скачивания, если не существует
+    Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
+
+    try:
+        with sync_playwright() as p:
+            logger.info(f"Открываем страницу: {url}")
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+
+            # Переходим на страницу
+            page.goto(url, wait_until="networkidle")
+
+            # Получаем HTML страницы
+            html = page.content()
+
+            # Ищем ссылку на видео в HTML
+            video_url_match = re.search(r'"contentUrl":"([^"]+\.mp4)"', html)
+
+            if not video_url_match:
+                logger.error("Ссылка на видео не найдена в HTML")
+                browser.close()
+                return None
+
+            video_url = video_url_match.group(1)
+            logger.info(f"Найдена ссылка на видео: {video_url}")
+
+            # Извлекаем название видео
+            title_match = re.search(r'"name":"([^"]+)"', html)
+            video_title = title_match.group(1) if title_match else "redgifs_video"
+
+            # Очищаем название от спецсимволов
+            video_title = re.sub(r'[<>:"/\\|?*]', '_', video_title)[:50]
+
+            # Скачиваем видео
+            video_path = os.path.join(TEMP_DIR, f"{video_title}.mp4")
+            logger.info(f"Скачиваем видео в: {video_path}")
+
+            # Скачиваем с правильными заголовками браузера
+            page.goto(video_url, wait_until="domcontentloaded")
+            video_response = page.request.get(video_url)
+
+            with open(video_path, "wb") as f:
+                f.write(video_response.body())
+
+            browser.close()
+
+            if os.path.exists(video_path):
+                logger.info(f"Видео скачано: {video_path}")
+                return video_path
+
+    except Exception as e:
+        logger.error(f"Ошибка при скачивании RedGifs: {e}")
+
+    return None
+
+
 def download_video(url: str) -> str | None:
     """
     Скачивает видео по URL и возвращает путь к файлу.
@@ -70,6 +141,11 @@ def download_video(url: str) -> str | None:
     """
     # Создаём директорию для скачивания, если не существует
     Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
+
+    # Проверяем, если это RedGifs - используем Playwright
+    if "redgifs.com" in url.lower() and PLAYWRIGHT_AVAILABLE:
+        logger.info("Используем Playwright для RedGifs")
+        return download_redgifs_video(url)
 
     # Путь к файлу cookies
     cookies_path = os.environ.get("COOKIES_FILE", "/app/cookies.txt")
