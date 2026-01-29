@@ -115,17 +115,20 @@ async def download_redgifs_video(url: str) -> str | None:
             video_path = os.path.join(TEMP_DIR, f"{video_title}.mp4")
             logger.info(f"Скачиваем видео в: {video_path}")
 
-            # Скачиваем видео через requests с заголовками браузера
-            import httpx
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "*/*",
-                "Accept-Language": "en-US,en;q=0.5",
-            }
-            async with httpx.AsyncClient() as client:
-                response = await client.get(video_url, headers=headers, follow_redirects=True)
-                with open(video_path, "wb") as f:
-                    f.write(response.content)
+            # Скачиваем видео через Playwright
+            logger.info(f"Скачиваем видео через браузер...")
+
+            # Используем download API
+            async with context.new_page() as page2:
+                # Начинаем скачивание
+                download_task = page2.wait_for_download("start")
+                await page2.goto(video_url, wait_until="domcontentloaded")
+                download = await download_task
+
+                # Сохраняем
+                await download.save_as(video_path)
+
+            logger.info(f"Видео скачано: {video_path}")
 
             await browser.close()
 
