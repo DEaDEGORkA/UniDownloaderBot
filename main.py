@@ -120,14 +120,37 @@ async def download_redgifs_video(url: str) -> str | None:
             video_path = os.path.join(TEMP_DIR, f"{video_title}.mp4")
             logger.info(f"Скачиваем видео в: {video_path}")
 
-            # Скачиваем через Playwright download API
+            # Скачиваем через Playwright - получаем видео через fetch в браузере
             logger.info("Скачиваем видео через браузер...")
 
-            # Используем expect_download контекстный менеджер
-            async with pw_context.expect_download() as download_info:
-                await page.goto(video_url, wait_until="domcontentloaded")
-            download = download_info.value
-            await download.save_as(video_path)
+            # Получаем видео через JavaScript fetch
+            video_data = await page.evaluate("""async (url) => {
+                try {
+                    const response = await fetch(url);
+                    const arrayBuffer = await response.arrayBuffer();
+                    // Конвертируем в base64 для передачи
+                    const base64 = Buffer.from(arrayBuffer).toString('base64');
+                    return {
+                        success: true,
+                        data: base64,
+                        contentType: response.headers.get('content-type') || 'video/mp4'
+                    };
+                } catch (e) {
+                    return { success: false, error: e.message };
+                }
+            }""", video_url)
+
+            if not video_data.get("success"):
+                logger.error(f"Ошибка при скачивании видео: {video_data.get('error')}")
+                await pw_context.close()
+                await browser.close()
+                return None
+
+            # Сохраняем видео из base64
+            import base64
+            video_content = base64.b64decode(video_data["data"])
+            with open(video_path, "wb") as f:
+                f.write(video_content)
 
             await pw_context.close()
             await browser.close()
