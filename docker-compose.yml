@@ -17,6 +17,8 @@ services:
     volumes:
       - ./downloads:/tmp/video_downloads
       - ./cookies.txt:/app/cookies.txt:ro
+    # Использовать сеть хоста для доступа к VPN
+    network_mode: host
     # Ограничение ресурсов (работает в docker-compose standalone и swarm)
     mem_limit: 512m
     cpus: 1.0
